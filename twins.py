@@ -1,17 +1,19 @@
-import pandas as pd
-import categorize as cat
-from sentence_transformers import SentenceTransformer
-import scipy
-import time
 import multiprocessing as mp
+import time
+import scipy
+import pandas as pd
+from sentence_transformers import SentenceTransformer
 
 DATA = [] #usable data in numpy_array format
 CATEGORY_LIST = [set() for i in range(50)] #list of categories, sets that contain company names
 CATEGORY_NUM = {} #dictionary of CATEGORY_LIST set indices with category names
 COMPANIES = {} #dictionary of companies by name as keys and short descriptions as values
 BEST_K = 10 #the desired amount of most relevant companies
-SENTENCE_LIMIT = 100 #limit on how many sentences to use BERT on
+SENTENCE_LIMIT = 1000 #limit on how many sentences to use BERT on
 LOWEST_SENTENCE_LENGTH = 8 #lower bound on the length of a description for a sentence
+WORDS_TO_IGNORE = {"and", "a", "to", "the", ".", ",", "that", "which", "are", "is", "for",
+"one", "of", "on", "or", "with", "their"} #may want more or less words in this list
+DESCRIPTION_LIMIT = 40 #limit on number of words to check for similarities in heuristics
 model = SentenceTransformer('bert-base-nli-mean-tokens') #NLP model to use
 
 def data_wrangling():
@@ -19,11 +21,12 @@ def data_wrangling():
     print("Starting data wrangling")
     data = pd.read_excel("dataset.xls")
     data = data.drop(["uuid", "uuid_1"], axis=1)
-    print(data.columns)
     data = data.to_numpy(na_value="none")
     for entry in data:
-        add_company(entry[0], entry[4]) #entry[1] is short, entry[4] is long description
+        valid_company = add_company(entry[0], entry[4]) #entry[1] is short, entry[4] is long description
         #entry[2], category_list, is ignored since less comprehensive than category_group_list
+        if not valid_company:
+            continue
         categories = seperate_by_commas_trim(entry[3])
         for category in categories:
             if category not in CATEGORY_NUM:
@@ -33,18 +36,19 @@ def data_wrangling():
 
 def add_company(name, description):
     """Function to add a company to the dictionary of companies, stores a mapping
-    from name to short_description."""
+    from name to short_description. Returns true if succeeds, false otherwise."""
     if len(description) > LOWEST_SENTENCE_LENGTH:
         COMPANIES[name] = description.lower()
+        return True
     else:
         #description not long enough to be considered
-        return
+        return False
 
-def get_category(company):
-    """Given a company finds it's category(s) and returns them."""
+def get_category(company_name):
+    """Given a company name finds it's category(s) and returns them."""
     categories = []
     for category in CATEGORY_NUM:
-        if company in CATEGORY_LIST[CATEGORY_NUM[category]]:
+        if company_name in CATEGORY_LIST[CATEGORY_NUM[category]]:
             categories.append(category)
     return categories
 
@@ -65,55 +69,79 @@ def category_analysis():
     print("there are {0} many companies".format(len(COMPANIES)))
     print("there are {0} many categories".format(len(CATEGORY_NUM)))
 
-def categorize(short_description):
-    """Given a short description return 3 best possible categories that best suit it."""
-    category = "none"
-    #TODO
-    #some logic using machine learning to classify short_description into one of the categories in CATEGORY_LIST
-    #currently using the model developed by SplendeourC4
-    #CREDIT: https://github.com/velapartners/SplendourC4
-    category = cat.solve(short_description)
-    print("The best category matching the description: {0} is {1}".format(short_description, category))
-    return category
-
 def sentences_in_category(categories):
-    """Given a short description search and return the best k companies in the given category.
-    Where best is defined as the most relevant and close. needs update"""
+    """Given a list of categories returns the descriptions that are associated with
+    companies that are in the given categories."""
     descriptions_in_category = []
     for category in categories:
         for company in CATEGORY_LIST[CATEGORY_NUM[category]]:
             descriptions_in_category.append(COMPANIES[company])
     return descriptions_in_category
 
-def split_into_n_sublists(l, n):
-    """Given a list l, splits l into n sublists of close size and returns the sublists in a list."""
-    size = int(len(l) / n)
-    sublists = [l[i:i + size] for i in range(0, len(l), size)]
+def split_into_n_sublists(lst, num):
+    """Given a list lst, splits lst into num sublists of close size and returns the sublists in a list."""
+    size = int(len(lst) / num)
+    sublists = [lst[i:i + size] for i in range(0, len(lst), size)]
     return sublists
 
-def closest_k_sentences(short_description, sentences_in_category):
+def closest_k_sentences(short_description, corpus_sentences):
     """Returns the k closest companies that have the best affiliated sentences with
     the given short description."""
-    corpus = model.encode(sentences_in_category)
+    corpus = model.encode(corpus_sentences)
     query = model.encode(short_description)
     distances = scipy.spatial.distance.cdist([query], corpus, "cosine")[0]
-    results = zip(range(len(distances)), distances)
-    print(len(sentences_in_category))
-    return results
+    scores = zip(range(len(distances)), distances)
+    print(len(corpus_sentences))
+    return scores
 
 def filter_sentences(sentence_list):
+    """Given a sentence list returns the sentence list in descending order of it's sentences
+    Jaccard similarity score."""
     sentence_with_similarity_score = []
     for sentence in sentence_list:
-        sentence_with_similarity_score.append((sentence, jaccard_similarity(sentence, short_description)))
+        sentence_with_similarity_score.append((sentence, jaccard_similarity(input_sentence, sentence)))
     sentence_with_similarity_score = sorted(sentence_with_similarity_score, key=lambda x: x[1])
     return sentence_with_similarity_score
 
-def jaccard_similarity(sentence1, sentence2):
-    intersection = 0
+def intersection(sentence1, sentence2):
+    """Given two sentences as list of words returns how many words are shared."""
+    ist = 0
     for word in sentence1:
         if word in sentence2:
-            intersection += 1
-    return intersection / (len(sentence1) + len(sentence2))
+            ist += 1
+    return ist
+
+def jaccard_similarity(sentence1, sentence2):
+    """Given two sentences returns their Jaccard similarity score for simplified versions."""
+    sentence1 = simplify_sentence(sentence1)
+    sentence2 = simplify_sentence(sentence2)
+    return intersection(sentence1, sentence2) / (len(sentence1) + len(sentence2))
+
+def dice_similarity(sentence1, sentence2):
+    """Given two sentences return their Dice Coefficient similarity score for simplified versions."""
+    sentence1 = simplify_sentence(sentence1)
+    sentence2 = simplify_sentence(sentence2)
+    return 2 * intersection(sentence1, sentence2) / ((len(sentence1) + len(sentence2)))
+
+def simplify_sentence(sentence):
+    """Given a sentence returns the simplification of that sentence by removing
+    string literals that don't have meaning on their own."""
+    words = sentence.split()
+    simple_sentence = [word for word in words if word not in WORDS_TO_IGNORE]
+    return simple_sentence[0:min(DESCRIPTION_LIMIT, len(simple_sentence))]
+
+def get_company(description, category):
+    """Given a description and category returns the company name assosiciated with it."""
+    for company in CATEGORY_LIST[CATEGORY_NUM[category]]:
+        if description == COMPANIES[company]:
+            return company
+    print("Could not find the company")
+    return "None"
+def companies_exist(companies):
+    for company in companies:
+        category = get_category(company)
+        if category:
+            print(company, "exists in dataset")
 
 if __name__ == '__main__':
     data_wrangling()
@@ -121,21 +149,25 @@ if __name__ == '__main__':
     start = time.perf_counter()
     number_of_processors = mp.cpu_count()
     print("Number of processors:", number_of_processors)
-    short_description = "a machine learning company that focuses on online payments."
+    input_sentence = "a machine learning company that focuses on online payments."
     all_sentences = filter_sentences(sentences_in_category(["payments"]))
     #all_sentences = sentences_in_category(["payments"]) #uncomment if u want no filtering
     sentences = [sentence[0] for sentence in all_sentences[0:SENTENCE_LIMIT]]
     print("Will run bert on {} many sentences.".format(len(sentences)))
+    companies_exist(["Coco", "Starship", "Serve Robotics", "Tortoise", "Cartken", "Monte Carlo", "SuperConductive", "BigEye"])
+    """
     pool = mp.Pool(number_of_processors)
     optimized_sentences = split_into_n_sublists(sentences, number_of_processors)
     for i in range(number_of_processors):
-        results = pool.apply_async(closest_k_sentences, args=(short_description, optimized_sentences[i]))
+        results = pool.apply_async(closest_k_sentences, args=(input_sentence, optimized_sentences[i]))
     pool.close()
     pool.join()
     result = results.get()
     #result = closest_k_sentences(sentences) #remove after testing
     result = sorted(result, key=lambda x: x[1])
     for idx, distance in result[0:BEST_K]:
-        print(sentences[idx].strip(), "(Score: {0})".format(1-distance))
+        long_description = sentences[idx].strip()
+        print(long_description, "Company name: {0} (Score: {1})".format(get_company(long_description, "payments"), 1-distance))
     end = time.perf_counter()
     print("It took {0} seconds to process {1} many sentences.".format(end - start, len(sentences)))
+    """
