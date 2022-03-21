@@ -137,11 +137,6 @@ def get_company(description, category):
             return company
     print("Could not find the company")
     return "None"
-def companies_exist(companies):
-    for company in companies:
-        category = get_category(company)
-        if category:
-            print(company, "exists in dataset")
 
 if __name__ == '__main__':
     data_wrangling()
@@ -149,13 +144,11 @@ if __name__ == '__main__':
     start = time.perf_counter()
     number_of_processors = mp.cpu_count()
     print("Number of processors:", number_of_processors)
-    input_sentence = "a machine learning company that focuses on online payments."
-    all_sentences = filter_sentences(sentences_in_category(["payments"]))
+    input_sentence = "Zippin has developed the next generation of checkout-free technology enabling retailers to quickly deploy frictionless shopping in their stores. Our patent-pending approach uses AI, machine learning and sensor fusion technology to create the best consumer experience: banishing checkout lines and self-scanners for good, and letting shoppers zip in and out with their purchases. Zippin‚Äôs platform leverages product and shopper tracking through overhead cameras, as well as smart shelf sensors, for the highest level of accuracy even in crowded stores. Founded by industry veterans from Amazon and SRI with deep backgrounds in retail technology, AI and computer vision, Zippin is headquartered in San Francisco and has raised venture funding from Maven Ventures, Core Ventures Group, Pear Ventures, Expansion VC, and Montage Ventures.  For more information, visit www.getzippin.com."
+    all_sentences = filter_sentences(sentences_in_category(["artificial intelligence"]))
     #all_sentences = sentences_in_category(["payments"]) #uncomment if u want no filtering
     sentences = [sentence[0] for sentence in all_sentences[0:SENTENCE_LIMIT]]
     print("Will run bert on {} many sentences.".format(len(sentences)))
-    companies_exist(["Coco", "Starship", "Serve Robotics", "Tortoise", "Cartken", "Monte Carlo", "SuperConductive", "BigEye"])
-    """
     pool = mp.Pool(number_of_processors)
     optimized_sentences = split_into_n_sublists(sentences, number_of_processors)
     for i in range(number_of_processors):
@@ -167,7 +160,6 @@ if __name__ == '__main__':
     result = sorted(result, key=lambda x: x[1])
     for idx, distance in result[0:BEST_K]:
         long_description = sentences[idx].strip()
-        print(long_description, "Company name: {0} (Score: {1})".format(get_company(long_description, "payments"), 1-distance))
+        print(long_description, "Company name: {0} (Score: {1})".format(get_company(long_description, "artificial intelligence"), 1-distance))
     end = time.perf_counter()
     print("It took {0} seconds to process {1} many sentences.".format(end - start, len(sentences)))
-    """
